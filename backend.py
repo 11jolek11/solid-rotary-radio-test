@@ -4,12 +4,12 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 # from Qt import QtCore
-
+from scipy import signal
+import matplotlib.pyplot as plt
 # import my_subprocess
 from base import BaseInfo, BasePowerThread
 import subprocess
 from datetime import datetime
-
 
 
 class Info(BaseInfo):
@@ -84,7 +84,6 @@ class PowerThread(BasePowerThread):
         self.lnb_lo = lnb_lo
         # self.databuffer = {"timestamp": [], "x": [], "y": []}
 
-
         # current_time = datetime.now()
         # formatted_time = current_time.strftime('%H_%M_%S')
 
@@ -158,16 +157,36 @@ class PowerThread(BasePowerThread):
             keys_to_include = ['x', 'y']
             cropped = {key: self.databuffer[key] for key in keys_to_include}
             df = pd.DataFrame(cropped)
+            # 433992,100 kHz
 
-            df = df[(df['y'] > 433e6) & (df['y'] < 435e6)]
+            #temp1 = df["x"][2500]
+            #temp2 = df["x"][2501]
+            #temp3 = df["x"][2502]
+            #print(f"{temp1}x{temp2}x{temp3}")
 
-            plot = sns.lineplot(df, x="x", y="y")
-            fig = plot.get_figure()
+            #df = df[(df['x'] >= 433.0) & (df['x'] <= 434.0)]
+            #print(df)
+
+            max_val = df["y"].max()
+            max_val_pos = df["y"].idxmax()
+
+            #print(f"{max_val} at {max_val_pos}")
+
+            peaks, _ = signal.find_peaks(df["y"], distance=300, height=-40)
+            #print(f"Number of peaks {len(peaks)}")
+            peaks_x = df["x"].loc[peaks]
+
+            print(list(zip(peaks_x, peaks)))
+
+            plt.plot(df["x"], df["y"])
+            plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
+            #plot = sns.lineplot(df, x="x", y="y")
+            #fig = plot.get_figure()
             # time_st = self.databuffer['timestamp'][0]
             current_time = datetime.now()
             formatted_time = current_time.strftime('%H_%M_%S')
-            fig.savefig(f"./img/spec_{formatted_time}.png")
-            plot.figure.clf()
+            plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
+            plt.clf()
 
 
     def run(self):
@@ -205,5 +224,7 @@ class PowerThread(BasePowerThread):
 
 if __name__ == "__main__":
     t = PowerThread()
-    t.setup()
+    t.setup(start_freq=433, stop_freq=434, bin_size=10)
     t.run()
+# 
+
