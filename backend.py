@@ -1,4 +1,7 @@
 import struct, shlex, sys, time
+import os
+import signal
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -10,6 +13,9 @@ import matplotlib.pyplot as plt
 from base import BaseInfo, BasePowerThread
 import subprocess
 from datetime import datetime
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class Info(BaseInfo):
@@ -92,6 +98,15 @@ class PowerThread(BasePowerThread):
         self.lastsweep = 0
         self.interval = interval
 
+
+        self.target = []
+        self.target_data = deque([], maxlen=400)
+        
+        self.history = []
+        self._history = []
+
+        self.targettted = False
+
     def process_start(self):
         """Start hackrf_sweep process"""
         if not self.process and self.params:
@@ -153,46 +168,47 @@ class PowerThread(BasePowerThread):
 
             len_x = len(self.databuffer["x"])
             len_y = len(self.databuffer["y"])
-            print(f'{len_x}x{len_y}')
+            #print(f'{len_x}x{len_y}')
             keys_to_include = ['x', 'y']
             cropped = {key: self.databuffer[key] for key in keys_to_include}
             df = pd.DataFrame(cropped)
             # 433992,100 kHz
+            # print(self._history)
+            
+            # print(self.target_data)
 
-            #temp1 = df["x"][2500]
-            #temp2 = df["x"][2501]
-            #temp3 = df["x"][2502]
-            #print(f"{temp1}x{temp2}x{temp3}")
-
-            #df = df[(df['x'] >= 433.0) & (df['x'] <= 434.0)]
-            #print(df)
-
-            max_val = df["y"].max()
-            max_val_pos = df["y"].idxmax()
-
-            #print(f"{max_val} at {max_val_pos}")
+            if self.targettted:
+                target_index = self.target[0]
+                to_append = df.iloc[target_index]["y"]
+                print(to_append)
+                self.target_data.append(to_append)
+            #print(self.target_data)
 
             peaks, _ = signal.find_peaks(df["y"], distance=300, height=-40)
-            #print(f"Number of peaks {len(peaks)}")
-            peaks_x = df["x"].loc[peaks]
+            peaks_x = df["x"].loc[peaks].to_list()
+            peaks_y = df["y"].loc[peaks].to_list()
 
-            print(list(zip(peaks_x, peaks)))
+            for k_i, k in zip(peaks, peaks_x):
+                if (k_i, int(k)) not in self._history:
+                    self._history.append((k_i, int(k)))
 
-            plt.plot(df["x"], df["y"])
-            plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
-            #plot = sns.lineplot(df, x="x", y="y")
-            #fig = plot.get_figure()
-            # time_st = self.databuffer['timestamp'][0]
-            current_time = datetime.now()
-            formatted_time = current_time.strftime('%H_%M_%S')
-            plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
-            plt.clf()
+            # plt.plot(df["x"], df["y"])
+            # plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
+            # plt.scatter(peaks_x, peaks_y, c="g")
+            # current_time = datetime.now()
+            # formatted_time = current_time.strftime('%H_%M_%S')
+            # plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
+            # plt.clf()
 
+    def select_target(self, target_freq):
+        self.target = target_freq
+        self.target_data = []
 
     def run(self):
         """hackrf_sweep thread main loop"""
         self.process_start()
         self.alive = True
+        targettted = False
         # self.powerThreadStarted.emit()
 
         while self.alive:
@@ -212,6 +228,12 @@ class PowerThread(BasePowerThread):
 
                 if buf:
                     self.parse_output(buf)
+                    self.history = self._history.copy()
+                    
+                    if not self.targettted and len(self._history) >= 1:
+                        self.target = self._history[0]
+                        print(f"New target {self.target}")
+                        self.targettted = True
                 else:
                     break
             else:
@@ -219,6 +241,7 @@ class PowerThread(BasePowerThread):
 
         self.process_stop()
         self.alive = False
+        os.kill(self.process.pid, signal.SIGSTOP)
         # self.powerThreadStopped.emit()
 
 
@@ -226,5 +249,4 @@ if __name__ == "__main__":
     t = PowerThread()
     t.setup(start_freq=433, stop_freq=434, bin_size=10)
     t.run()
-# 
 
