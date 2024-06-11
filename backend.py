@@ -7,12 +7,13 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 # from Qt import QtCore
-from scipy import signal
+from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 # import my_subprocess
 from base import BaseInfo, BasePowerThread
 import subprocess
 from datetime import datetime
+from threading import Lock, Thread
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -98,8 +99,11 @@ class PowerThread(BasePowerThread):
         self.lastsweep = 0
         self.interval = interval
 
+        self.lock = Lock()
+
 
         self.target = []
+        self.target_index = None
         self.target_data = deque([], maxlen=400)
         
         self.history = []
@@ -135,6 +139,7 @@ class PowerThread(BasePowerThread):
             print('Starting backend:')
             print(' '.join(cmdline))
             print()
+            # stdout=subprocess.PIPE
             self.process = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
                                             universal_newlines=False)
 
@@ -177,14 +182,15 @@ class PowerThread(BasePowerThread):
             
             # print(self.target_data)
 
-            if self.targettted:
-                target_index = self.target[0]
-                to_append = df.iloc[target_index]["y"]
-                print(to_append)
+            if self.targettted and (self.target_index is not None):
+                to_append = df.iloc[self.target_index]["y"]
+                #print(to_append)
                 self.target_data.append(to_append)
             #print(self.target_data)
 
-            peaks, _ = signal.find_peaks(df["y"], distance=300, height=-40)
+            #print(self.history)
+
+            peaks, _ = find_peaks(df["y"], distance=300, height=-40)
             peaks_x = df["x"].loc[peaks].to_list()
             peaks_y = df["y"].loc[peaks].to_list()
 
@@ -199,18 +205,47 @@ class PowerThread(BasePowerThread):
             # formatted_time = current_time.strftime('%H_%M_%S')
             # plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
             # plt.clf()
+            if (self.lock.locked()):
+                self.lock.release()
 
-    def select_target(self, target_freq):
-        self.target = target_freq
+    def select_target(self, target_index):
+        # self.lock.acquire()
+        self.target_index = target_index
         self.target_data = []
+        self.targettted = True
+        # if self.lock.locked():
+        #     self.lock.release()
+        # self.lock.release()
+
+    def get_history(self):
+        # self.lock.acquire()
+        hist = self.history.copy()
+        # if self.lock.locked():
+        #     self.lock.release()
+        return hist
+
+    def get_target_data(self):
+        # self.lock.acquire()
+        data = self.target_data.copy()
+        # if self.lock.locked():
+        #     self.lock.release()
+        return data
+
+    def die(self):
+        # self.lock.acquire()
+        self.alive = False
+        # if self.lock.locked():
+        #     self.lock.release()
 
     def run(self):
         """hackrf_sweep thread main loop"""
+        self.lock.acquire()
         self.process_start()
         self.alive = True
-        targettted = False
+        self.targettted = False
+        if self.lock.locked():
+            self.lock.release()
         # self.powerThreadStarted.emit()
-
         while self.alive:
             try:
                 buf = self.process.stdout.read(4)
@@ -227,17 +262,24 @@ class PowerThread(BasePowerThread):
                     continue
 
                 if buf:
-                    self.parse_output(buf)
+                    # TODO(11jolek11): Remove
+                    #if not self.targettted and len(self._history) >= 1:
+                    #    self.target = self._history[0]
+                    #    print(f"New target {self.target}")
+                    #    self.targettted = True
+
+                    self.lock.acquire()
                     self.history = self._history.copy()
-                    
-                    if not self.targettted and len(self._history) >= 1:
-                        self.target = self._history[0]
-                        print(f"New target {self.target}")
-                        self.targettted = True
+                    self.parse_output(buf)
+                    if self.lock.locked():
+                        self.lock.release()
+                    time.sleep(0.001)
                 else:
                     break
             else:
                 break
+            if self.lock.locked():
+                self.lock.release()
 
         self.process_stop()
         self.alive = False
