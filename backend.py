@@ -1,15 +1,22 @@
 import struct, shlex, sys, time
+import os
+import signal
+from collections import deque
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 # from Qt import QtCore
-
+from scipy.signal import find_peaks
+import matplotlib.pyplot as plt
 # import my_subprocess
 from base import BaseInfo, BasePowerThread
 import subprocess
 from datetime import datetime
+from threading import Lock, Thread
 
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class Info(BaseInfo):
@@ -84,7 +91,6 @@ class PowerThread(BasePowerThread):
         self.lnb_lo = lnb_lo
         # self.databuffer = {"timestamp": [], "x": [], "y": []}
 
-
         # current_time = datetime.now()
         # formatted_time = current_time.strftime('%H_%M_%S')
 
@@ -92,6 +98,18 @@ class PowerThread(BasePowerThread):
         self.databuffer = {"x": [], "y": []}
         self.lastsweep = 0
         self.interval = interval
+
+        self.lock = Lock()
+
+
+        self.target = []
+        self.target_index = None
+        self.target_data = deque([], maxlen=400)
+        
+        self.history = []
+        self._history = []
+
+        self.targettted = False
 
     def process_start(self):
         """Start hackrf_sweep process"""
@@ -121,6 +139,7 @@ class PowerThread(BasePowerThread):
             print('Starting backend:')
             print(' '.join(cmdline))
             print()
+            # stdout=subprocess.PIPE
             self.process = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
                                             universal_newlines=False)
 
@@ -154,28 +173,83 @@ class PowerThread(BasePowerThread):
 
             len_x = len(self.databuffer["x"])
             len_y = len(self.databuffer["y"])
-            print(f'{len_x}x{len_y}')
+            #print(f'{len_x}x{len_y}')
             keys_to_include = ['x', 'y']
             cropped = {key: self.databuffer[key] for key in keys_to_include}
             df = pd.DataFrame(cropped)
+            # 433992,100 kHz
+            # print(self._history)
+            
+            # print(self.target_data)
 
-            df = df[(df['y'] > 433e6) & (df['y'] < 435e6)]
+<<<<<<< HEAD
+            #df = df[(df['y'] > 433e6) & (df['y'] < 435e6)]
+=======
+            if self.targettted and (self.target_index is not None):
+                to_append = df.iloc[self.target_index]["y"]
+                #print(to_append)
+                self.target_data.append(to_append)
+            #print(self.target_data)
+>>>>>>> 79c3cc28ef37a13fa5fc96279228ab8294eaaac7
 
-            plot = sns.lineplot(df, x="x", y="y")
-            fig = plot.get_figure()
-            # time_st = self.databuffer['timestamp'][0]
-            current_time = datetime.now()
-            formatted_time = current_time.strftime('%H_%M_%S')
-            fig.savefig(f"./img/spec_{formatted_time}.png")
-            plot.figure.clf()
+            #print(self.history)
 
+            peaks, _ = find_peaks(df["y"], distance=300, height=-40)
+            peaks_x = df["x"].loc[peaks].to_list()
+            peaks_y = df["y"].loc[peaks].to_list()
+
+            for k_i, k in zip(peaks, peaks_x):
+                if (k_i, int(k)) not in self._history:
+                    self._history.append((k_i, int(k)))
+
+            # plt.plot(df["x"], df["y"])
+            # plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
+            # plt.scatter(peaks_x, peaks_y, c="g")
+            # current_time = datetime.now()
+            # formatted_time = current_time.strftime('%H_%M_%S')
+            # plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
+            # plt.clf()
+            if (self.lock.locked()):
+                self.lock.release()
+
+    def select_target(self, target_index):
+        # self.lock.acquire()
+        self.target_index = target_index
+        self.target_data = []
+        self.targettted = True
+        # if self.lock.locked():
+        #     self.lock.release()
+        # self.lock.release()
+
+    def get_history(self):
+        # self.lock.acquire()
+        hist = self.history.copy()
+        # if self.lock.locked():
+        #     self.lock.release()
+        return hist
+
+    def get_target_data(self):
+        # self.lock.acquire()
+        data = self.target_data.copy()
+        # if self.lock.locked():
+        #     self.lock.release()
+        return data
+
+    def die(self):
+        # self.lock.acquire()
+        self.alive = False
+        # if self.lock.locked():
+        #     self.lock.release()
 
     def run(self):
         """hackrf_sweep thread main loop"""
+        self.lock.acquire()
         self.process_start()
         self.alive = True
+        self.targettted = False
+        if self.lock.locked():
+            self.lock.release()
         # self.powerThreadStarted.emit()
-
         while self.alive:
             try:
                 buf = self.process.stdout.read(4)
@@ -192,18 +266,33 @@ class PowerThread(BasePowerThread):
                     continue
 
                 if buf:
+                    # TODO(11jolek11): Remove
+                    #if not self.targettted and len(self._history) >= 1:
+                    #    self.target = self._history[0]
+                    #    print(f"New target {self.target}")
+                    #    self.targettted = True
+
+                    self.lock.acquire()
+                    self.history = self._history.copy()
                     self.parse_output(buf)
+                    if self.lock.locked():
+                        self.lock.release()
+                    time.sleep(0.001)
                 else:
                     break
             else:
                 break
+            if self.lock.locked():
+                self.lock.release()
 
         self.process_stop()
         self.alive = False
+        os.kill(self.process.pid, signal.SIGSTOP)
         # self.powerThreadStopped.emit()
 
 
 if __name__ == "__main__":
     t = PowerThread()
-    t.setup()
+    t.setup(start_freq=433, stop_freq=434, bin_size=10)
     t.run()
+
