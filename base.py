@@ -1,8 +1,13 @@
 import os, threading, shlex
+from multiprocessing import shared_memory
+from shared import SharedPandasDataFrame
+import pandas as pd
 
 # from Qt import QtCore
 
 import subprocess
+
+from pandas import date_range
 
 class BaseInfo:
     """Default device metadata"""
@@ -55,12 +60,19 @@ class BasePowerThread():
     # powerThreadStarted = QtCore.Signal()
     # powerThreadStopped = QtCore.Signal()
 
-    def __init__(self, data_storage=None, parent=None):
+    def __init__(self, data_storage=None, sync=None):
         # super().__init__(parent)
+        # if not data_storage:
+        #     self.data_storage = shared_memory.SharedMemory(data_storage)
+        # else:
+        #     self.data_storage = shared_memory.SharedMemory(create=True, size=1000000)
         self.data_storage = data_storage
+        self._data_container = None
+        # self.data_storage = data_storage
         self.alive = False
         self.process = None
         self._shutdown_lock = threading.Lock()
+        # self.semaphore = multiprocessing.Semaphore()
 
     def stop(self):
         """Stop power process thread"""

@@ -5,6 +5,7 @@ from collections import deque
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import data
 import seaborn as sns
 # from Qt import QtCore
 from scipy.signal import find_peaks
@@ -12,12 +13,17 @@ import matplotlib.pyplot as plt
 # import my_subprocess
 from base import BaseInfo, BasePowerThread
 import subprocess
+from multiprocessing import Manager, Semaphore
 from datetime import datetime
 from threading import Lock, Thread
+from shared import SharedPandasDataFrame
+
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
+enable_plotting = True
 
 class Info(BaseInfo):
     """hackrf_sweep device metadata"""
@@ -110,6 +116,9 @@ class PowerThread(BasePowerThread):
         self._history = []
 
         self.targettted = False
+        self.manager = Manager()
+        self.data = self.manager.dict()
+        self.semaphore = Semaphore()
 
     def process_start(self):
         """Start hackrf_sweep process"""
@@ -181,36 +190,50 @@ class PowerThread(BasePowerThread):
             # print(self._history)
             
             # print(self.target_data)
-
-<<<<<<< HEAD
-            #df = df[(df['y'] > 433e6) & (df['y'] < 435e6)]
-=======
             if self.targettted and (self.target_index is not None):
                 to_append = df.iloc[self.target_index]["y"]
                 #print(to_append)
                 self.target_data.append(to_append)
             #print(self.target_data)
->>>>>>> 79c3cc28ef37a13fa5fc96279228ab8294eaaac7
 
-            #print(self.history)
-
+            #print(self.history)#
+                                
             peaks, _ = find_peaks(df["y"], distance=300, height=-40)
             peaks_x = df["x"].loc[peaks].to_list()
             peaks_y = df["y"].loc[peaks].to_list()
-
+                                
             for k_i, k in zip(peaks, peaks_x):
                 if (k_i, int(k)) not in self._history:
                     self._history.append((k_i, int(k)))
 
-            # plt.plot(df["x"], df["y"])
-            # plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
-            # plt.scatter(peaks_x, peaks_y, c="g")
-            # current_time = datetime.now()
-            # formatted_time = current_time.strftime('%H_%M_%S')
-            # plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
-            # plt.clf()
-            if (self.lock.locked()):
-                self.lock.release()
+            # print(f">>>> {df.memory_usage()}")
+            # if self._data_container is not None:
+            #     self._data_container.unlink()
+            # self._data_container = SharedPandasDataFrame(df)
+            # self.data_storage = self._data_container.get_name()
+            
+            # self.lock.acquire()
+
+            self.semaphore.acquire()
+            self.data["x"] = list(df["x"].values)
+            self.data["y"] = list(df["y"].values)
+
+            # {"x": list(df["x"].values), "y": list(df["y"].values)}
+
+            if enable_plotting:
+                # plt.plot(df["x"], df["y"])
+                plt.plot(self.data["x"], self.data["y"])
+                plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
+                plt.scatter(peaks_x, peaks_y, c="g")
+                current_time = datetime.now()
+                formatted_time = current_time.strftime('%H_%M_%S')
+                plt.savefig(f"./img/spec_{formatted_time}__{current_time}.png")
+                plt.clf()
+
+            self.semaphore.release()
+            # time.sleep(2)
+            # if (self.lock.locked()):
+            #     self.lock.release()
 
     def select_target(self, target_index):
         # self.lock.acquire()
@@ -228,6 +251,9 @@ class PowerThread(BasePowerThread):
         #     self.lock.release()
         return hist
 
+    def get_data(self):
+        return self.data
+
     def get_target_data(self):
         # self.lock.acquire()
         data = self.target_data.copy()
@@ -243,12 +269,12 @@ class PowerThread(BasePowerThread):
 
     def run(self):
         """hackrf_sweep thread main loop"""
-        self.lock.acquire()
+        # self.lock.acquire()
         self.process_start()
         self.alive = True
         self.targettted = False
-        if self.lock.locked():
-            self.lock.release()
+        # if self.lock.locked():
+        #     self.lock.release()
         # self.powerThreadStarted.emit()
         while self.alive:
             try:
@@ -272,27 +298,28 @@ class PowerThread(BasePowerThread):
                     #    print(f"New target {self.target}")
                     #    self.targettted = True
 
-                    self.lock.acquire()
+                    # self.lock.acquire()
                     self.history = self._history.copy()
                     self.parse_output(buf)
-                    if self.lock.locked():
-                        self.lock.release()
-                    time.sleep(0.001)
+                    # if self.lock.locked():
+                    #     self.lock.release()
+                    # time.sleep(0.001)
                 else:
                     break
             else:
                 break
-            if self.lock.locked():
-                self.lock.release()
+            # if self.lock.locked():
+            #     self.lock.release()
 
         self.process_stop()
         self.alive = False
+        # self._data_container.unlink()
         os.kill(self.process.pid, signal.SIGSTOP)
         # self.powerThreadStopped.emit()
 
 
 if __name__ == "__main__":
-    t = PowerThread()
+    t = PowerThread(data_storage="fgbdvefcds")
     t.setup(start_freq=433, stop_freq=434, bin_size=10)
     t.run()
 
