@@ -5,25 +5,19 @@ from collections import deque
 
 import numpy as np
 import pandas as pd
-# from scipy.sparse import data
-import seaborn as sns
-# from Qt import QtCore
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
-# import my_subprocess
 from base import BaseInfo, BasePowerThread
 import subprocess
 from multiprocessing import Manager, Semaphore
 from datetime import datetime
-from threading import Lock, Thread
-from shared import SharedPandasDataFrame
-
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 enable_plotting = False
+
 
 class Info(BaseInfo):
     """hackrf_sweep device metadata"""
@@ -95,23 +89,13 @@ class PowerThread(BasePowerThread):
             "single_shot": single_shot
         }
         self.lnb_lo = lnb_lo
-        # self.databuffer = {"timestamp": [], "x": [], "y": []}
-
-        # current_time = datetime.now()
-        # formatted_time = current_time.strftime('%H_%M_%S')
-
-        # self.databuffer = {"timestamp": [], "x": [], "y": []}
         self.databuffer = {"x": [], "y": []}
         self.lastsweep = 0
         self.interval = interval
 
-        self.lock = Lock()
-
-
         self.target = []
         self.target_index = None
         self.target_data = deque([], maxlen=400)
-        
         self.history = []
         self._history = []
 
@@ -125,7 +109,6 @@ class PowerThread(BasePowerThread):
     def process_start(self):
         """Start hackrf_sweep process"""
         if not self.process and self.params:
-            # settings = QtCore.QSettings()
             cmdline = shlex.split("/usr/bin/hackrf_sweep")
             cmdline.extend([
                 "-f", "{}:{}".format(int(self.params["start_freq"] - self.lnb_lo / 1e6),
@@ -180,51 +163,28 @@ class PowerThread(BasePowerThread):
             # otherwise sort and display the data.
             sorted_data = sorted(zip(self.databuffer["x"], self.databuffer["y"]))
             self.databuffer["x"], self.databuffer["y"] = [list(x) for x in zip(*sorted_data)]
-            # self.data_storage.update(self.databuffer)
 
-            len_x = len(self.databuffer["x"])
-            len_y = len(self.databuffer["y"])
-            #print(f'{len_x}x{len_y}')
             keys_to_include = ['x', 'y']
             cropped = {key: self.databuffer[key] for key in keys_to_include}
             df = pd.DataFrame(cropped)
             # 433992,100 kHz
-            # print(self._history)
-            
-            # print(self.target_data)
             if self.targettted and (self.target_index is not None):
                 to_append = df.iloc[self.target_index]["y"]
-                # print(to_append)
                 self.target_data.append(to_append)
-            # print(self.target_data)
 
-            # print(self.history)#
-                                
             peaks, _ = find_peaks(df["y"], distance=300, height=-40)
-            # print(peaks)
             peaks_x = df["x"].loc[peaks].to_list()
             peaks_y = df["y"].loc[peaks].to_list()
-                                
+
             for k_i, k in zip(peaks, peaks_x):
                 if (k_i, int(k)) not in self._history:
                     self._history.append((k_i, int(k)))
-
-            # print(f">>>> {df.memory_usage()}")
-            # if self._data_container is not None:
-            #     self._data_container.unlink()
-            # self._data_container = SharedPandasDataFrame(df)
-            # self.data_storage = self._data_container.get_name()
-            
-            # self.lock.acquire()
 
             self.semaphore.acquire()
             self.data["x"] = list(df["x"].values)
             self.data["y"] = list(df["y"].values)
 
-            # {"x": list(df["x"].values), "y": list(df["y"].values)}
-
             if enable_plotting:
-                # plt.plot(df["x"], df["y"])
                 plt.plot(self.data["x"], self.data["y"])
                 plt.vlines(peaks_x, ymin=-120, ymax=10, colors="r")
                 plt.scatter(peaks_x, peaks_y, c="g")
@@ -234,26 +194,16 @@ class PowerThread(BasePowerThread):
                 plt.clf()
 
             self.semaphore.release()
-            # time.sleep(2)
-            # if (self.lock.locked()):
-            #     self.lock.release()
 
     def select_target(self, target_index):
-        # self.lock.acquire()
         self.target_index = target_index
         self.target_data = []
         self.targettted = True
-        # if self.lock.locked():
-        #     self.lock.release()
-        # self.lock.release()
 
     def get_history(self):
-        # self.lock.acquire()
         self.semaphore.acquire()
         hist = self._history.copy()
         self.semaphore.release()
-        # if self.lock.locked():
-        #     self.lock.release()
         return hist
 
     def get_data(self):
@@ -263,27 +213,18 @@ class PowerThread(BasePowerThread):
         return temp
 
     def get_target_data(self):
-        # self.lock.acquire()
         data = self.target_data.copy()
-        # if self.lock.locked():
-        #     self.lock.release()
         return data
 
     def die(self):
-        # self.lock.acquire()
         self.alive = False
-        # if self.lock.locked():
-        #     self.lock.release()
 
     def run(self):
         """hackrf_sweep thread main loop"""
-        # self.lock.acquire()
         self.process_start()
         self.alive = True
         self.targettted = False
-        # if self.lock.locked():
-        #     self.lock.release()
-        # self.powerThreadStarted.emit()
+
         while self.alive:
             try:
                 buf = self.process.stdout.read(4)
@@ -300,30 +241,16 @@ class PowerThread(BasePowerThread):
                     continue
 
                 if buf:
-                    # TODO(11jolek11): Remove
-                    #if not self.targettted and len(self._history) >= 1:
-                    #    self.target = self._history[0]
-                    #    print(f"New target {self.target}")
-                    #    self.targettted = True
-
-                    # self.lock.acquire()
                     self.history = self._history.copy()
                     self.parse_output(buf)
-                    # if self.lock.locked():
-                    #     self.lock.release()
-                    # time.sleep(0.001)
                 else:
                     break
             else:
                 break
-            # if self.lock.locked():
-            #     self.lock.release()
 
         self.process_stop()
         self.alive = False
-        # self._data_container.unlink()
         os.kill(self.process.pid, signal.SIGSTOP)
-        # self.powerThreadStopped.emit()
 
 
 if __name__ == "__main__":
