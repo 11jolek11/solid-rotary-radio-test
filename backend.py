@@ -5,7 +5,7 @@ from collections import deque
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import data
+# from scipy.sparse import data
 import seaborn as sns
 # from Qt import QtCore
 from scipy.signal import find_peaks
@@ -23,7 +23,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-enable_plotting = True
+enable_plotting = False
 
 class Info(BaseInfo):
     """hackrf_sweep device metadata"""
@@ -118,6 +118,8 @@ class PowerThread(BasePowerThread):
         self.targettted = False
         self.manager = Manager()
         self.data = self.manager.dict()
+        self.data["x"] = []
+        self.data["y"] = []
         self.semaphore = Semaphore()
 
     def process_start(self):
@@ -192,13 +194,14 @@ class PowerThread(BasePowerThread):
             # print(self.target_data)
             if self.targettted and (self.target_index is not None):
                 to_append = df.iloc[self.target_index]["y"]
-                #print(to_append)
+                # print(to_append)
                 self.target_data.append(to_append)
-            #print(self.target_data)
+            # print(self.target_data)
 
-            #print(self.history)#
+            # print(self.history)#
                                 
             peaks, _ = find_peaks(df["y"], distance=300, height=-40)
+            # print(peaks)
             peaks_x = df["x"].loc[peaks].to_list()
             peaks_y = df["y"].loc[peaks].to_list()
                                 
@@ -246,13 +249,18 @@ class PowerThread(BasePowerThread):
 
     def get_history(self):
         # self.lock.acquire()
-        hist = self.history.copy()
+        self.semaphore.acquire()
+        hist = self._history.copy()
+        self.semaphore.release()
         # if self.lock.locked():
         #     self.lock.release()
         return hist
 
     def get_data(self):
-        return self.data
+        self.semaphore.acquire()
+        temp = self.data.copy()
+        self.semaphore.release()
+        return temp
 
     def get_target_data(self):
         # self.lock.acquire()
